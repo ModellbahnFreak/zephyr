@@ -132,87 +132,96 @@ static const struct ethernet_api netc_eth_api = {.iface_api.init = netc_eth_ifac
 #endif
 						 .send = netc_eth_tx};
 
-#define NETC_PSI_INSTANCE_DEFINE(n)                                                                \
-	PINCTRL_DT_INST_DEFINE(n);                                                                 \
-	NETC_GENERATE_MAC_ADDRESS(n)                                                               \
-	AT_NONCACHEABLE_SECTION_ALIGN(                                                             \
-		static uint8_t eth##n##_tx_buff[CONFIG_ETH_NXP_IMX_TX_RING_BUF_SIZE],              \
-		NETC_BUFF_ALIGN);                                                                  \
-	AT_NONCACHEABLE_SECTION_ALIGN(                                                             \
-		static netc_tx_bd_t eth##n##_txbd_array[CONFIG_ETH_NXP_IMX_TX_RING_NUM]            \
-						       [CONFIG_ETH_NXP_IMX_TX_RING_LEN],           \
-		NETC_BD_ALIGN);                                                                    \
-	static netc_tx_frame_info_t eth##n##_txdirty_array[CONFIG_ETH_NXP_IMX_TX_RING_NUM]         \
-							  [CONFIG_ETH_NXP_IMX_TX_RING_LEN];        \
-	AT_NONCACHEABLE_SECTION_ALIGN(                                                             \
-		static rx_buffer_t eth##n##_rx_buff[CONFIG_ETH_NXP_IMX_RX_RING_NUM]                \
-						   [CONFIG_ETH_NXP_IMX_RX_RING_LEN],               \
-		NETC_BUFF_ALIGN);                                                                  \
-	static uint64_t eth##n##_rx_buff_addr_array[CONFIG_ETH_NXP_IMX_RX_RING_NUM]                \
-						   [CONFIG_ETH_NXP_IMX_RX_RING_LEN];               \
-	AT_NONCACHEABLE_SECTION(static uint8_t eth##n##_rx_frame[NETC_RX_RING_BUF_SIZE_ALIGN]);    \
-	AT_NONCACHEABLE_SECTION_ALIGN(                                                             \
-		static netc_rx_bd_t eth##n##_rxbd_array[CONFIG_ETH_NXP_IMX_RX_RING_NUM]            \
-						       [CONFIG_ETH_NXP_IMX_RX_RING_LEN],           \
-		NETC_BD_ALIGN);                                                                    \
-	static void netc_eth##n##_bdr_init(netc_bdr_config_t *bdr_config,                          \
-					   netc_rx_bdr_config_t *rx_bdr_config,                    \
-					   netc_tx_bdr_config_t *tx_bdr_config)                    \
-	{                                                                                          \
-		for (uint8_t ring = 0U; ring < CONFIG_ETH_NXP_IMX_RX_RING_NUM; ring++) {           \
-			for (uint8_t bd = 0U; bd < CONFIG_ETH_NXP_IMX_RX_RING_LEN; bd++) {         \
-				eth##n##_rx_buff_addr_array[ring][bd] =                            \
-					(uint64_t)(uintptr_t)&eth##n##_rx_buff[ring][bd];          \
-			}                                                                          \
-		}                                                                                  \
-		memset(bdr_config, 0, sizeof(netc_bdr_config_t));                                  \
-		memset(rx_bdr_config, 0, sizeof(netc_rx_bdr_config_t));                            \
-		memset(tx_bdr_config, 0, sizeof(netc_tx_bdr_config_t));                            \
-		bdr_config->rxBdrConfig = rx_bdr_config;                                           \
-		bdr_config->txBdrConfig = tx_bdr_config;                                           \
-		bdr_config->rxBdrConfig[0].bdArray = &eth##n##_rxbd_array[0][0];                   \
-		bdr_config->rxBdrConfig[0].len = CONFIG_ETH_NXP_IMX_RX_RING_LEN;                   \
-		bdr_config->rxBdrConfig[0].buffAddrArray = &eth##n##_rx_buff_addr_array[0][0];     \
-		bdr_config->rxBdrConfig[0].buffSize = NETC_RX_RING_BUF_SIZE_ALIGN;                 \
-		bdr_config->rxBdrConfig[0].msixEntryIdx = NETC_RX_MSIX_ENTRY_IDX;                  \
-		bdr_config->rxBdrConfig[0].extendDescEn = false;                                   \
-		bdr_config->rxBdrConfig[0].enThresIntr = true;                                     \
-		bdr_config->rxBdrConfig[0].enCoalIntr = true;                                      \
-		bdr_config->rxBdrConfig[0].intrThreshold = 1;                                      \
-		bdr_config->txBdrConfig[0].bdArray = &eth##n##_txbd_array[0][0];                   \
-		bdr_config->txBdrConfig[0].len = CONFIG_ETH_NXP_IMX_TX_RING_LEN;                   \
-		bdr_config->txBdrConfig[0].dirtyArray = &eth##n##_txdirty_array[0][0];             \
-		bdr_config->txBdrConfig[0].msixEntryIdx = NETC_TX_MSIX_ENTRY_IDX;                  \
-		bdr_config->txBdrConfig[0].enIntr = true;                                          \
-	}                                                                                          \
-	static struct netc_eth_data netc_eth##n##_data = {                                         \
-		.mac_addr = DT_INST_PROP_OR(n, local_mac_address, {0}),                            \
-		.tx_buff = eth##n##_tx_buff,                                                       \
-		.rx_frame = eth##n##_rx_frame,                                                     \
-	};                                                                                         \
-	static const struct netc_eth_config netc_eth##n##_config = {                               \
-		DEVICE_MMIO_NAMED_ROM_INIT_BY_NAME(port, DT_DRV_INST(n)),                          \
-		DEVICE_MMIO_NAMED_ROM_INIT_BY_NAME(pfconfig, DT_DRV_INST(n)),                      \
-		.generate_mac = netc_eth##n##_generate_mac,                                        \
-		.bdr_init = netc_eth##n##_bdr_init,                                                \
+#define NETC_PSI_INSTANCE_DEFINE(n)                                                                                                   \
+	PINCTRL_DT_INST_DEFINE(n);                                                                                                    \
+	NETC_GENERATE_MAC_ADDRESS(n)                                                                                                  \
+	AT_NONCACHEABLE_SECTION_ALIGN(                                                                                                \
+		static uint8_t eth##n##_tx_buff                                                                                       \
+			[CONFIG_ETH_NXP_IMX_TX_RING_BUF_SIZE *                                                                        \
+			 /*CONFIG_ETH_NXP_IMX_TX_RING_NUM * */ CONFIG_ETH_NXP_IMX_TX_RING_LEN],                                          \
+		NETC_BUFF_ALIGN);                                                                                                     \
+	AT_NONCACHEABLE_SECTION_ALIGN(                                                                                                \
+		static netc_tx_bd_t eth##n##_txbd_array[CONFIG_ETH_NXP_IMX_TX_RING_NUM]                                               \
+						       [CONFIG_ETH_NXP_IMX_TX_RING_LEN],                                              \
+		NETC_BD_ALIGN);                                                                                                       \
+	static netc_tx_frame_info_t eth##n##_txdirty_array[CONFIG_ETH_NXP_IMX_TX_RING_NUM]                                            \
+							  [CONFIG_ETH_NXP_IMX_TX_RING_LEN];                                           \
+	AT_NONCACHEABLE_SECTION_ALIGN(                                                                                                \
+		static rx_buffer_t eth##n##_rx_buff[CONFIG_ETH_NXP_IMX_RX_RING_NUM]                                                   \
+						   [CONFIG_ETH_NXP_IMX_RX_RING_LEN],                                                  \
+		NETC_BUFF_ALIGN);                                                                                                     \
+	static uint64_t eth##n##_rx_buff_addr_array[CONFIG_ETH_NXP_IMX_RX_RING_NUM]                                                   \
+						   [CONFIG_ETH_NXP_IMX_RX_RING_LEN];                                                  \
+	AT_NONCACHEABLE_SECTION(static uint8_t eth##n##_rx_frame[NETC_RX_RING_BUF_SIZE_ALIGN]);                                       \
+	AT_NONCACHEABLE_SECTION_ALIGN(                                                                                                \
+		static netc_rx_bd_t eth##n##_rxbd_array[CONFIG_ETH_NXP_IMX_RX_RING_NUM]                                               \
+						       [CONFIG_ETH_NXP_IMX_RX_RING_LEN],                                              \
+		NETC_BD_ALIGN);                                                                                                       \
+	static void netc_eth##n##_bdr_init(netc_bdr_config_t *bdr_config,                                                             \
+					   netc_rx_bdr_config_t *rx_bdr_config,                                                       \
+					   netc_tx_bdr_config_t *tx_bdr_config)                                                       \
+	{                                                                                                                             \
+		for (uint8_t ring = 0U; ring < CONFIG_ETH_NXP_IMX_RX_RING_NUM; ring++) {                                              \
+			for (uint8_t bd = 0U; bd < CONFIG_ETH_NXP_IMX_RX_RING_LEN; bd++) {                                            \
+				eth##n##_rx_buff_addr_array[ring][bd] =                                                               \
+					(uint64_t)(uintptr_t)&eth##n##_rx_buff[ring][bd];                                             \
+			}                                                                                                             \
+		}                                                                                                                     \
+		memset(bdr_config, 0, sizeof(netc_bdr_config_t));                                                                     \
+		memset(rx_bdr_config, 0, sizeof(netc_rx_bdr_config_t));                                                               \
+		memset(tx_bdr_config, 0, sizeof(netc_tx_bdr_config_t));                                                               \
+		bdr_config->rxBdrConfig = rx_bdr_config;                                                                              \
+		bdr_config->txBdrConfig = tx_bdr_config;                                                                              \
+		bdr_config->rxBdrConfig[0].bdArray = &eth##n##_rxbd_array[0][0];                                                      \
+		bdr_config->rxBdrConfig[0].len = CONFIG_ETH_NXP_IMX_RX_RING_LEN;                                                      \
+		bdr_config->rxBdrConfig[0].buffAddrArray = &eth##n##_rx_buff_addr_array[0][0];                                        \
+		bdr_config->rxBdrConfig[0].buffSize = NETC_RX_RING_BUF_SIZE_ALIGN;                                                    \
+		bdr_config->rxBdrConfig[0].msixEntryIdx = NETC_RX_MSIX_ENTRY_IDX;                                                     \
+		bdr_config->rxBdrConfig[0].extendDescEn = false;                                                                      \
+		bdr_config->rxBdrConfig[0].enThresIntr = true;                                                                        \
+		bdr_config->rxBdrConfig[0].enCoalIntr = true;                                                                         \
+		bdr_config->rxBdrConfig[0].intrThreshold = 1;                                                                         \
+		for (uint8_t ring = 0U; ring < CONFIG_ETH_NXP_IMX_TX_RING_NUM; ring++) {                                              \
+			bdr_config->txBdrConfig[ring].bdArray = &eth##n##_txbd_array[ring][0];                                        \
+			bdr_config->txBdrConfig[ring].len = CONFIG_ETH_NXP_IMX_TX_RING_LEN;                                           \
+			bdr_config->txBdrConfig[ring].dirtyArray =                                                                    \
+				&eth##n##_txdirty_array[ring][0];                                                                     \
+			bdr_config->txBdrConfig[ring].msixEntryIdx = NETC_TX_MSIX_ENTRY_IDX;                                          \
+			bdr_config->txBdrConfig[ring].enIntr = true;                                                                  \
+			if (CONFIG_ETH_NXP_IMX_TX_RING_NUM > 1) {                                                                     \
+				bdr_config->txBdrConfig[ring].isVlanInsert = true;                                                  \
+				bdr_config->txBdrConfig[ring].priority = ring;                                                        \
+			}                                                                                                             \
+		}                                                                                                                     \
+	}                                                                                                                             \
+	static struct netc_eth_data netc_eth##n##_data = {                                                                            \
+		.mac_addr = DT_INST_PROP_OR(n, local_mac_address, {0}),                                                               \
+		.tx_buff = eth##n##_tx_buff,                                                                                          \
+		.rx_frame = eth##n##_rx_frame,                                                                                        \
+	};                                                                                                                            \
+	static const struct netc_eth_config netc_eth##n##_config = {                                                                  \
+		DEVICE_MMIO_NAMED_ROM_INIT_BY_NAME(port, DT_DRV_INST(n)),                                                             \
+		DEVICE_MMIO_NAMED_ROM_INIT_BY_NAME(pfconfig, DT_DRV_INST(n)),                                                         \
+		.generate_mac = netc_eth##n##_generate_mac,                                                                           \
+		.bdr_init = netc_eth##n##_bdr_init,                                                                                   \
 		.phy_dev = (COND_CODE_1(DT_INST_NODE_HAS_PROP(n, phy_handle),                      \
-					(DEVICE_DT_GET(DT_INST_PHANDLE(n, phy_handle))), NULL)),   \
-		.phy_mode = NETC_PHY_MODE(DT_DRV_INST(n)),                                         \
-		.pseudo_mac = DT_ENUM_HAS_VALUE(DT_DRV_INST(n), phy_connection_type, internal),    \
-		.pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),                                       \
-		.si_idx = (DT_INST_PROP(n, mac_index) << 8) | DT_INST_PROP(n, si_index),           \
-		IF_ENABLED(CONFIG_ETH_NXP_IMX_NETC_MSI_GIC,                                        \
+					(DEVICE_DT_GET(DT_INST_PHANDLE(n, phy_handle))), NULL)),                                                                  \
+			.phy_mode = NETC_PHY_MODE(DT_DRV_INST(n)),                                                                    \
+			.pseudo_mac =                                                                                                 \
+				DT_ENUM_HAS_VALUE(DT_DRV_INST(n), phy_connection_type, internal),                                     \
+			.pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),                                                                  \
+			.si_idx = (DT_INST_PROP(n, mac_index) << 8) | DT_INST_PROP(n, si_index),                                      \
+			IF_ENABLED(CONFIG_ETH_NXP_IMX_NETC_MSI_GIC,                                        \
 			(.msi_device_id = DT_INST_PROP_OR(n, msi_device_id, 0),                    \
 			.msi_dev = (COND_CODE_1(DT_NODE_HAS_PROP(DT_INST_PARENT(n), msi_parent),   \
 			       (DEVICE_DT_GET(DT_PHANDLE(DT_INST_PARENT(n), msi_parent))), NULL)), \
-			))                                                                         \
-		IF_DISABLED(CONFIG_ETH_NXP_IMX_NETC_MSI_GIC,                                       \
+			))                          \
+						 IF_DISABLED(CONFIG_ETH_NXP_IMX_NETC_MSI_GIC,                                       \
 			(.tx_intr_msg_data = NETC_TX_INTR_MSG_DATA_START + n,                      \
-			.rx_intr_msg_data = NETC_RX_INTR_MSG_DATA_START + n,))                     \
-		IF_ENABLED(NETC_PTP_TIMESTAMPING_SUPPORT,                                          \
-			(.ptp_clock = DEVICE_DT_GET_OR_NULL(DT_INST_PHANDLE(n, ptp_clock)),))      \
-	};                                                                                         \
-	ETH_NET_DEVICE_DT_INST_DEFINE(n, netc_eth_init, NULL, &netc_eth##n##_data,                 \
-				      &netc_eth##n##_config, CONFIG_ETH_INIT_PRIORITY,             \
+			.rx_intr_msg_data = NETC_RX_INTR_MSG_DATA_START + n,)) \
+								 IF_ENABLED(NETC_PTP_TIMESTAMPING_SUPPORT,                                          \
+			(.ptp_clock = DEVICE_DT_GET_OR_NULL(DT_INST_PHANDLE(n, ptp_clock)),)) };                           \
+	ETH_NET_DEVICE_DT_INST_DEFINE(n, netc_eth_init, NULL, &netc_eth##n##_data,                                                    \
+				      &netc_eth##n##_config, CONFIG_ETH_INIT_PRIORITY,                                                \
 				      &netc_eth_api, NET_ETH_MTU);
 DT_INST_FOREACH_STATUS_OKAY(NETC_PSI_INSTANCE_DEFINE)

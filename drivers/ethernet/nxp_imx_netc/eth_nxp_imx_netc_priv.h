@@ -121,7 +121,7 @@ struct netc_eth_data {
 	uint8_t mac_addr[6];
 	/* TX */
 	uint8_t *tx_buff;
-	volatile bool tx_done;
+	volatile uint16_t bestEffort_producerIndex;
 	/* RX */
 	struct k_sem rx_sem;
 	struct k_thread rx_thread;

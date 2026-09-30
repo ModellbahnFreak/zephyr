@@ -70,7 +70,7 @@ config ETH_NXP_IMX_TX_RING_LEN
 
 config ETH_NXP_IMX_TX_RING_BUF_SIZE
 	int "TX ring data buffer size"
-	default 1000
+	default 1500
 	range 64 1536
 	help
 	  Size, in bytes, of the TX data buffer. The size must be big enough to

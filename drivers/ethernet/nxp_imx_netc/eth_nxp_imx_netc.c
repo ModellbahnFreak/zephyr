@@ -23,6 +23,7 @@ LOG_MODULE_REGISTER(nxp_imx_eth);
 #endif
 #include "../eth.h"
 #include "eth_nxp_imx_netc_priv.h"
+#include <fsl_netc_timer.h>
 
 const struct device *netc_dev_list[NETC_DRV_MAX_INST_SUPPORT];
 
@@ -240,7 +241,6 @@ static void netc_tx_isr_handler(const void *arg)
 	struct netc_eth_data *data = dev->data;
 
 	EP_CleanTxIntrFlags(&data->handle, 1, 0);
-	data->tx_done = true;
 }
 
 static void netc_rx_isr_handler(const void *arg)
@@ -272,7 +272,6 @@ static void msgintr_isr(void)
 		/* Transmit interrupt */
 		if (irqs & (1 << config->tx_intr_msg_data)) {
 			EP_CleanTxIntrFlags(&data->handle, 1, 0);
-			data->tx_done = true;
 		}
 		/* Receive interrupt */
 		if (irqs & (1 << config->rx_intr_msg_data)) {
@@ -292,13 +291,13 @@ int netc_eth_init_common(const struct device *dev)
 	struct netc_eth_data *data = dev->data;
 	netc_msix_entry_t msix_entry[NETC_MSIX_ENTRY_NUM];
 	netc_rx_bdr_config_t rx_bdr_config = {0};
-	netc_tx_bdr_config_t tx_bdr_config = {0};
+	netc_tx_bdr_config_t tx_bdr_config[CONFIG_ETH_NXP_IMX_TX_RING_NUM];
 	netc_bdr_config_t bdr_config = {0};
 	ep_config_t ep_config;
 	uint32_t msg_addr;
 	status_t result;
 
-	config->bdr_init(&bdr_config, &rx_bdr_config, &tx_bdr_config);
+	config->bdr_init(&bdr_config, &rx_bdr_config, tx_bdr_config);
 
 #ifdef NETC_PTP_TIMESTAMPING_SUPPORT
 	if (netc_eth_get_ptp_clock(dev) != NULL) {
@@ -380,7 +379,7 @@ int netc_eth_init_common(const struct device *dev)
 	/* Endpoint configuration. */
 	EP_GetDefaultConfig(&ep_config);
 	ep_config.si = config->si_idx;
-	ep_config.siConfig.txRingUse = 1;
+	ep_config.siConfig.txRingUse = CONFIG_ETH_NXP_IMX_TX_RING_NUM;
 	ep_config.siConfig.rxRingUse = 1;
 	ep_config.siConfig.vlanCtrl = kNETC_ENETC_StanCVlan | kNETC_ENETC_StanSVlan;
 	ep_config.userData = data;
@@ -388,8 +387,17 @@ int netc_eth_init_common(const struct device *dev)
 	ep_config.msixEntry = &msix_entry[0];
 	ep_config.entryNum = NETC_MSIX_ENTRY_NUM;
 	ep_config.port.ethMac.miiMode = config->phy_mode;
-	ep_config.port.ethMac.miiSpeed = kNETC_MiiSpeed100M;
+
+	if (DEVICE_DT_GET_OR_NULL(DT_NODELABEL(enetc_psi1)) == dev) {
+		ep_config.port.ethMac.miiSpeed = kNETC_MiiSpeed1000M;
+	} else {
+		ep_config.port.ethMac.miiSpeed = kNETC_MiiSpeed100M;
+	}
 	ep_config.port.ethMac.miiDuplex = kNETC_MiiFullDuplex;
+	ep_config.port.ethMac.oneStepOffset = 14 + 8;
+	ep_config.port.ethMac.enOneStepTS = true;
+	ep_config.port.ethMac.enChUpdate = false;
+	ep_config.port.ethMac.txTsSelect = kNETC_SyncTime;
 	ep_config.rxCacheMaintain = true;
 	ep_config.txCacheMaintain = true;
 
@@ -422,11 +430,12 @@ int netc_eth_init_common(const struct device *dev)
 	EP_MsixSetEntryMask(&data->handle, NETC_TX_MSIX_ENTRY_IDX, false);
 	EP_MsixSetEntryMask(&data->handle, NETC_RX_MSIX_ENTRY_IDX, false);
 
+	data->bestEffort_producerIndex = CONFIG_ETH_NXP_IMX_TX_RING_LEN + 1;
 	k_sem_init(&data->rx_sem, 0, 1);
 	k_thread_create(&data->rx_thread, data->rx_thread_stack,
 			K_KERNEL_STACK_SIZEOF(data->rx_thread_stack), netc_eth_rx_thread,
 			(void *)dev, NULL, NULL, K_PRIO_COOP(CONFIG_ETH_NXP_IMX_RX_THREAD_PRIO), 0,
-			K_NO_WAIT);
+			K_FOREVER);
 	k_thread_name_set(&data->rx_thread, "netc_eth_rx");
 
 	return 0;
@@ -435,7 +444,7 @@ int netc_eth_init_common(const struct device *dev)
 int netc_eth_tx(const struct device *dev, struct net_pkt *pkt)
 {
 	struct netc_eth_data *data = dev->data;
-	netc_buffer_struct_t buff = {.buffer = data->tx_buff, .length = sizeof(data->tx_buff)};
+	netc_buffer_struct_t buff;
 	netc_frame_struct_t frame = {.buffArray = &buff, .length = 1};
 	netc_tx_frame_info_t *frame_info;
 	struct net_if *iface_dst;
@@ -443,7 +452,7 @@ int netc_eth_tx(const struct device *dev, struct net_pkt *pkt)
 #if defined(NETC_SWITCH_NO_TAG_DRIVER_SUPPORT)
 	struct ethernet_context *eth_ctx = net_if_l2_data(data->iface);
 #endif
-#if !defined(CONFIG_DSA_NXP_IMX_NETC) || defined(NETC_SWITCH_NO_TAG_DRIVER_SUPPORT) || \
+#if !defined(CONFIG_DSA_NXP_IMX_NETC) || defined(NETC_SWITCH_NO_TAG_DRIVER_SUPPORT) ||             \
 	defined(NETC_PTP_TIMESTAMPING_SUPPORT)
 	const struct netc_eth_config *cfg = dev->config;
 #endif
@@ -485,76 +494,155 @@ int netc_eth_tx(const struct device *dev, struct net_pkt *pkt)
 		opt.flags |= kEP_TX_OPT_REQ_TS;
 	}
 #endif
-	/* Copy packet to tx buffer */
+
+#if CONFIG_ETH_NXP_IMX_TX_RING_NUM > 1
+	uint8_t ring = min(pkt->priority, CONFIG_ETH_NXP_IMX_TX_RING_NUM);
+	opt.vlan.pcp = ring;
+#else
+	uint8_t ring = 0;
+#endif
+
+	const struct device *dst_dev = net_if_get_device(iface_dst);
+	int key;
+	bool isBestEffort = !net_pkt_ats_is_scheduled(pkt);
+
+	/* Initially assume, frame buffer is contiguous and set the buff acordingly */
+	net_pkt_cursor_init(pkt);
+	buff.buffer = net_pkt_cursor_get_pos(pkt);
 	buff.length = (uint16_t)pkt_len;
-	ret = net_pkt_read(pkt, buff.buffer, pkt_len);
-	if (ret) {
-		LOG_ERR("Failed to copy packet to tx buffer: %d", ret);
-		ret = -ENOBUFS;
-		goto error;
+
+	memset(buff.buffer + 0x48, 0xff, 8);
+	key = irq_lock();
+	/* If BDR is full => wait for space to become available (waiting max. 1 frame) */
+	int spinCount = 0;
+	while (EP_GetIdleTxBDNum(&data->handle.txBdRing[0]) < 2) {
+		irq_unlock(key);
+		netc_tx_frame_info_t *info =
+			EP_ReclaimTxDescCommon(&data->handle, &data->handle.txBdRing[0], 0, true);
+		*((uint8_t *)(buff.buffer + 0x48 + spinCount)) = 0x01;
+		if (info != NULL) {
+			*((uint8_t *)(buff.buffer + 0x48 + spinCount)) |= (info->status >> 1);
+		}
+		spinCount++;
+		if (data->bestEffort_producerIndex < CONFIG_ETH_NXP_IMX_TX_RING_LEN) {
+			// check if best effort buffer was cleaned in prev call
+			uint16_t currProducerShift = (CONFIG_ETH_NXP_IMX_TX_RING_LEN - 1) -
+						     data->handle.txBdRing[0].producerIndex;
+			uint16_t clean = (data->handle.txBdRing[0].cleanIndex + currProducerShift) %
+					 CONFIG_ETH_NXP_IMX_TX_RING_LEN;
+			uint16_t bestEffort = (data->bestEffort_producerIndex + currProducerShift) %
+					      CONFIG_ETH_NXP_IMX_TX_RING_LEN;
+			if (clean > bestEffort) {
+				data->bestEffort_producerIndex = CONFIG_ETH_NXP_IMX_TX_RING_LEN + 1;
+			}
+		}
+		key = irq_lock();
 	}
 
-	/* Send */
-	data->tx_done = false;
+	/* Check if frame buffers need to be copied to make them contiguous */
+	if (!net_pkt_is_contiguous(pkt, pkt_len)) {
+		uint16_t cnt = data->handle.txBdRing[0].producerIndex;
+		// buff.buffer = data->tx_buff + (ring * CONFIG_ETH_NXP_IMX_TX_RING_BUF_SIZE);
+		buff.buffer = data->tx_buff + ((cnt % CONFIG_ETH_NXP_IMX_TX_RING_LEN) *
+					       CONFIG_ETH_NXP_IMX_TX_RING_BUF_SIZE);
+		buff.length = min((uint16_t)pkt_len, CONFIG_ETH_NXP_IMX_TX_RING_BUF_SIZE);
+		ret = net_pkt_read(pkt, buff.buffer, buff.length);
+		if (ret) {
+			irq_unlock(key);
+			LOG_ERR("Failed to copy packet to tx buffer: %d", ret);
+			ret = -ENOBUFS;
+			goto error;
+		}
+	}
 
 #if defined(NETC_SWITCH_NO_TAG_DRIVER_SUPPORT)
 	if (eth_ctx->dsa_port == DSA_CONDUIT_PORT) {
-		const struct dsa_port_config *port_cfg = net_if_get_device(iface_dst)->config;
+		const struct dsa_port_config *port_cfg = dst_dev->config;
 		const int dst_port = port_cfg->port_idx;
 		netc_tx_bd_t txDesc[2] = {0};
-
+#define PRIORITY2TC_8 {1, 0, 2, 3, 4, 5, 6, 7}
+		uint8_t prio = net_pkt_timestamp_ns(pkt);
+		if prio > 7 { /* Map priorities higher than 7 (max supported) to default 0 */
+			prio = 0;
+		}
+		txDesc[0].standard.isExtended = 1U;
 		txDesc[0].standard.flags = NETC_SI_TXDESCRIP_RD_FLQ(2) |
 					   NETC_SI_TXDESCRIP_RD_SMSO_MASK |
-					   NETC_SI_TXDESCRIP_RD_PORT(dst_port);
+					   NETC_SI_TXDESCRIP_RD_PORT(dst_port) |
+					   NETC_SI_TXDESCRIP_RD_IPV(prio);
+		txDesc[0].ext.pcp = ring;
 #ifdef NETC_PTP_TIMESTAMPING_SUPPORT
 		if (pkt_is_gptp || net_pkt_is_tx_timestamping(pkt)) {
-			txDesc[0].standard.flags |= NETC_SI_TXDESCRIP_RD_TSR_MASK;
+			txDesc[0].standard.flags |= NETC_SI_TXDESCRIP_RD_TSR_MASK |
+						    (NETC_SI_TXDESCRIP_RD_TSR_MASK >> 1);
+			txDesc[1].ext.eFlags |= (uint8_t)kNETC_TxExtOneStepTs;
+			txDesc[1].ext.timestamp = (0x3fffffff & net_pkt_timestamp_ns(pkt));
 		}
 #endif
-		result = EP_SendFrameCommon(&data->handle, &data->handle.txBdRing[0], 0, &frame,
+		result = EP_SendFrameCommon(&data->handle, &data->handle.txBdRing[0], ring, &frame,
 					    NULL, &txDesc[0], data->handle.cfg.txCacheMaintain);
 	} else {
-		result = EP_SendFrame(&data->handle, 0, &frame, NULL, &opt);
+		result = EP_SendFrame(&data->handle, ring, &frame, NULL, &opt);
 	}
 #else
-	result = EP_SendFrame(&data->handle, 0, &frame, NULL, &opt);
+	result = EP_SendFrame(&data->handle, ring, &frame, NULL, &opt);
 #endif
+
+	if (isBestEffort) {
+		data->bestEffort_producerIndex = data->handle.hw.si->BDR[0].TBPIR;
+	}
+	irq_unlock(key);
 	if (result != kStatus_Success) {
-		LOG_ERR("Failed to tx frame");
+		LOG_ERR("Failed to tx frame, error: %d", result);
 		ret = -EIO;
 		goto error;
 	}
 
-	while (!data->tx_done) {
-	}
-
-	do {
-		frame_info = EP_ReclaimTxDescCommon(&data->handle, &data->handle.txBdRing[0],
-						    0, true);
-		if (frame_info != NULL) {
-			if (frame_info->status != kNETC_EPTxSuccess) {
-				memset(frame_info, 0, sizeof(netc_tx_frame_info_t));
-				LOG_ERR("Failed to tx frame");
-				ret = -EIO;
-				goto error;
+	// todo: check if two step timestamping active or other reason to wait, if so => wait for
+	// packet so finish sending and check if in isr => only wait if not
+	if (
+#ifdef NETC_PTP_TIMESTAMPING_SUPPORT
+		pkt_is_gptp || net_pkt_is_tx_timestamping(pkt) ||
+#endif
+		isBestEffort) {
+		// EP_WaitUnitilTxComplete(&data->handle, 0)
+		while (data->bestEffort_producerIndex <= CONFIG_ETH_NXP_IMX_TX_RING_LEN &&
+		       data->handle.hw.si->BDR[0].TBCIR != data->bestEffort_producerIndex) {
+			if (!k_is_in_isr()) {
+				k_yield();
 			}
+		}
+		data->bestEffort_producerIndex = CONFIG_ETH_NXP_IMX_TX_RING_LEN + 1;
+
+		do {
+			frame_info = EP_ReclaimTxDescCommon(&data->handle,
+							    &data->handle.txBdRing[0], 0, true);
+			if (frame_info != NULL) {
+				if (frame_info->status != kNETC_EPTxSuccess) {
+					memset(frame_info, 0, sizeof(netc_tx_frame_info_t));
+					LOG_ERR("Failed to tx frame");
+					ret = -EIO;
+					goto error;
+				}
 
 #ifdef NETC_PTP_TIMESTAMPING_SUPPORT
-			if (frame_info->isTsAvail) {
-				netc_eth_pkt_get_timestamp(pkt, cfg->ptp_clock,
-							   frame_info->timestamp);
-				net_if_add_tx_timestamp(pkt);
-			}
+				if (frame_info->isTsAvail) {
+					netc_eth_pkt_get_timestamp(pkt, cfg->ptp_clock,
+								   frame_info->timestamp);
+					net_if_add_tx_timestamp(pkt);
+				}
 #if defined(NETC_SWITCH_NO_TAG_DRIVER_SUPPORT)
-			if (eth_ctx->dsa_port == DSA_CONDUIT_PORT && frame_info->isTxTsIdAvail) {
-				dsa_netc_port_txtsid(net_if_get_device(iface_dst),
-						     frame_info->txtsid);
+				if (eth_ctx->dsa_port == DSA_CONDUIT_PORT &&
+				    frame_info->isTxTsIdAvail) {
+					dsa_netc_add_and_port_txtsid(net_if_get_device(iface_dst),
+								     pkt, frame_info->txtsid);
+				}
+#endif
+#endif
+				memset(frame_info, 0, sizeof(netc_tx_frame_info_t));
 			}
-#endif
-#endif
-			memset(frame_info, 0, sizeof(netc_tx_frame_info_t));
-		}
-	} while (frame_info != NULL);
+		} while (frame_info != NULL);
+	}
 
 	ret = 0;
 error:

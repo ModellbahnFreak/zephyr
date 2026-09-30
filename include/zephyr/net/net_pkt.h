@@ -248,6 +248,15 @@ struct net_pkt {
 #endif
 	/* bitfield byte alignment boundary */
 
+#if defined(CONFIG_ATS_SOFTWARE_DRIVER)
+	uint8_t ats_is_scheduled
+		: 1; /* In order for newly allocated instances to not automatically be assigned to
+			stream 0, this flag must be set for shaped traffic */
+	uint8_t ats_stream; /* Unique stream number this packet belongs to; must be <
+			       CONFIG_ATS_SCHEDULER_INSTANCES => scheduler instance to use for ats
+			     */
+#endif
+
 #if defined(CONFIG_NET_IP)
 	union {
 		/* IPv6 hop limit or IPv4 ttl for this network packet.
@@ -658,6 +667,41 @@ static inline bool net_pkt_forwarding(struct net_pkt *pkt)
 static inline void net_pkt_set_forwarding(struct net_pkt *pkt, bool forward)
 {
 	pkt->forwarding = forward;
+}
+
+static inline bool net_pkt_ats_is_scheduled(struct net_pkt *pkt)
+{
+#if defined(CONFIG_ATS_SOFTWARE_DRIVER)
+	return pkt->ats_is_scheduled;
+#else
+	ARG_UNUSED(pkt);
+	return false;
+#endif
+}
+
+static inline uint8_t net_pkt_ats_stream(struct net_pkt *pkt)
+{
+#if defined(CONFIG_ATS_SOFTWARE_DRIVER)
+	return pkt->ats_is_scheduled ? pkt->ats_stream : 255;
+#else
+	ARG_UNUSED(pkt);
+	return 255;
+#endif
+}
+
+static inline void net_pkt_set_ats_stream(struct net_pkt *pkt, uint8_t stream)
+{
+#if defined(CONFIG_ATS_SOFTWARE_DRIVER)
+	if (stream >= CONFIG_ATS_SCHEDULER_INSTANCES) {
+		pkt->ats_is_scheduled = 0;
+	} else {
+		pkt->ats_is_scheduled = 1;
+		pkt->ats_stream = stream;
+	}
+#else
+	ARG_UNUSED(pkt);
+	ARG_UNUSED(stream);
+#endif
 }
 
 #if defined(CONFIG_NET_IPV4)

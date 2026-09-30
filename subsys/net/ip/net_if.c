@@ -258,9 +258,11 @@ static bool net_if_tx(struct net_if *iface, struct net_pkt *pkt)
 			}
 		}
 
-		net_if_tx_lock(iface);
+		
+		bool skipLock = net_pkt_ats_is_scheduled(pkt);
+		if (!skipLock) net_if_tx_lock(iface);
 		status = net_if_l2(iface)->send(iface, pkt);
-		net_if_tx_unlock(iface);
+		if (!skipLock) net_if_tx_unlock(iface);
 		if (status < 0) {
 			NET_WARN_RATELIMIT("iface %d pkt %p send failure status %d",
 				     net_if_get_by_iface(iface), pkt, status);
